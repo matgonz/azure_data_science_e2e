@@ -33,7 +33,6 @@ import pandas as pd
 input_temp_dir = os.path.join(os.environ["SPARK_LOCAL_DIRS"], "tmp", str(uuid.uuid4())[:8])
 os.makedirs(input_temp_dir)
 
-
 # Download the artifact and read it into a pandas DataFrame
 input_client = MlflowClient()
 input_data_path = input_client.download_artifacts("8a47aae0f21648beaa8df758e517c597", "data", input_temp_dir)
@@ -55,7 +54,9 @@ df_loaded.head(5)
 # COMMAND ----------
 
 from databricks.automl_runtime.sklearn.column_selector import ColumnSelector
+
 supported_cols = ["PreferredPaymentMode_UPI", "PreferedOrderCat_Others", "PreferedOrderCat_Mobile_Phone", "PreferedOrderCat_Fashion", "Complain", "PreferredPaymentMode_CC", "MaritalStatus_Divorced", "PreferredPaymentMode_E_wallet", "MaritalStatus_Single", "PreferredPaymentMode_Debit_Card", "PreferredPaymentMode_Credit_Card", "Gender_Male", "CashbackAmount", "DaySinceLastOrder", "PreferedOrderCat_Mobile", "Gender_Female", "PreferredLoginDevice_Phone", "HourSpendOnApp", "WarehouseToHome", "CityTier_3", "NumberOfAddress", "PreferredLoginDevice_Computer", "PreferredPaymentMode_COD", "MaritalStatus_Married", "SatisfactionScore", "Tenure", "OrderAmountHikeFromlastYear", "OrderCount", "PreferedOrderCat_Laptop_&_Accessory", "PreferedOrderCat_Grocery", "CouponUsed", "CityTier_1", "PreferredLoginDevice_Mobile_Phone", "NumberOfDeviceRegistered", "PreferredPaymentMode_Cash_on_Delivery", "CityTier_2"]
+
 col_selector = ColumnSelector(supported_cols)
 
 # COMMAND ----------
