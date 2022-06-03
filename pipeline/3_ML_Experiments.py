@@ -1,33 +1,48 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # LightGBM training
-# MAGIC This is an auto-generated notebook. To reproduce these results, attach this notebook to the **PropensityPurchase_v9** cluster and rerun it.
-# MAGIC - Compare trials in the [MLflow experiment](#mlflow/experiments/713584551057122/s?orderByKey=metrics.%60val_f1_score%60&orderByAsc=false)
-# MAGIC - Navigate to the parent notebook [here](#notebook/713584551057112) (If you launched the AutoML experiment using the Experiments UI, this link isn't very useful.)
-# MAGIC - Clone this notebook into your project folder by selecting **File > Clone** in the notebook toolbar.
+# MAGIC # ML Experiments
 # MAGIC 
-# MAGIC Runtime Version: _10.5.x-cpu-ml-scala2.12_
-
-# COMMAND ----------
-
-# 22-06-03-15:45-LightGBM-456dc153f598c29f270d4b0480355572
-import mlflow
-import databricks.automl_runtime
-
-target_col = "Churn"
+# MAGIC So, the last we used AutoML to create a baseline model. Now, we'll to analyse metrics, the bias variance tradeoff and propose the best solution for this problem.
+# MAGIC 
+# MAGIC **AutoML**
+# MAGIC - [MLflow experiments](#mlflow/experiments/713584551057122/s?orderByKey=metrics.%60val_f1_score%60&orderByAsc=false)
+# MAGIC - [Best Model](#mlflow/experiments/713584551057122/runs/de7019603a78477ab6391adf466f1a80)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Load Data
+# MAGIC # 1. Libraries
 
 # COMMAND ----------
 
-from mlflow.tracking import MlflowClient
 import os
 import uuid
 import shutil
 import pandas as pd
+import collections
+
+import mlflow
+from mlflow.tracking import MlflowClient
+from databricks.automl_runtime.sklearn.column_selector import ColumnSelector
+import databricks.automl_runtime
+
+import sklearn
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import FunctionTransformer, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn import set_config
+
+set_config(display="diagram")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 2. Load Data
+# MAGIC 
+# MAGIC We'll download the artifacts created by AutoML Experiments to use here.
+
+# COMMAND ----------
 
 # Create temp directory to download input data from MLflow
 input_temp_dir = os.path.join(os.environ["SPARK_LOCAL_DIRS"], "tmp", str(uuid.uuid4())[:8])
@@ -47,90 +62,8 @@ df_loaded.head(5)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Select supported columns
-# MAGIC Select only the columns that are supported. This allows us to train a model that can predict on a dataset that has extra columns that are not used in training.
-# MAGIC `[]` are dropped in the pipelines. See the Alerts tab of the AutoML Experiment page for details on why these columns are dropped.
-
-# COMMAND ----------
-
-from databricks.automl_runtime.sklearn.column_selector import ColumnSelector
-
-supported_cols = ["PreferredPaymentMode_UPI", "PreferedOrderCat_Others", "PreferedOrderCat_Mobile_Phone", "PreferedOrderCat_Fashion", "Complain", "PreferredPaymentMode_CC", "MaritalStatus_Divorced", "PreferredPaymentMode_E_wallet", "MaritalStatus_Single", "PreferredPaymentMode_Debit_Card", "PreferredPaymentMode_Credit_Card", "Gender_Male", "CashbackAmount", "DaySinceLastOrder", "PreferedOrderCat_Mobile", "Gender_Female", "PreferredLoginDevice_Phone", "HourSpendOnApp", "WarehouseToHome", "CityTier_3", "NumberOfAddress", "PreferredLoginDevice_Computer", "PreferredPaymentMode_COD", "MaritalStatus_Married", "SatisfactionScore", "Tenure", "OrderAmountHikeFromlastYear", "OrderCount", "PreferedOrderCat_Laptop_&_Accessory", "PreferedOrderCat_Grocery", "CouponUsed", "CityTier_1", "PreferredLoginDevice_Mobile_Phone", "NumberOfDeviceRegistered", "PreferredPaymentMode_Cash_on_Delivery", "CityTier_2"]
-
-col_selector = ColumnSelector(supported_cols)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Preprocessors
-
-# COMMAND ----------
-
-transformers = []
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Numerical columns
+# MAGIC # 3. Train - Validation - Test Split
 # MAGIC 
-# MAGIC Missing values for numerical columns are imputed with mean by default.
-
-# COMMAND ----------
-
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import FunctionTransformer, StandardScaler
-
-num_imputers = []
-num_imputers.append(("impute_mean", SimpleImputer(), ["CashbackAmount", "DaySinceLastOrder", "OrderAmountHikeFromlastYear", "Tenure", "WarehouseToHome"]))
-
-numerical_pipeline = Pipeline(steps=[
-    ("converter", FunctionTransformer(lambda df: df.apply(pd.to_numeric, errors="coerce"))),
-    ("imputers", ColumnTransformer(num_imputers)),
-    ("standardizer", StandardScaler()),
-])
-
-transformers.append(("numerical", numerical_pipeline, ["WarehouseToHome", "CashbackAmount", "DaySinceLastOrder", "Tenure", "OrderAmountHikeFromlastYear"]))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Categorical columns
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### Low-cardinality categoricals
-# MAGIC Convert each low-cardinality categorical column into multiple binary columns through one-hot encoding.
-# MAGIC For each input categorical column (string or numeric), the number of output columns is equal to the number of unique values in the input column.
-
-# COMMAND ----------
-
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-
-one_hot_imputers = []
-
-one_hot_pipeline = Pipeline(steps=[
-    ("imputers", ColumnTransformer(one_hot_imputers, remainder="passthrough")),
-    ("one_hot_encoder", OneHotEncoder(handle_unknown="ignore")),
-])
-
-transformers.append(("onehot", one_hot_pipeline, ["CityTier_1", "CityTier_2", "CityTier_3", "Complain", "CouponUsed", "Gender_Female", "Gender_Male", "HourSpendOnApp", "MaritalStatus_Divorced", "MaritalStatus_Married", "MaritalStatus_Single", "NumberOfAddress", "NumberOfDeviceRegistered", "OrderCount", "PreferedOrderCat_Fashion", "PreferedOrderCat_Grocery", "PreferedOrderCat_Laptop_&_Accessory", "PreferedOrderCat_Mobile", "PreferedOrderCat_Mobile_Phone", "PreferedOrderCat_Others", "PreferredLoginDevice_Computer", "PreferredLoginDevice_Mobile_Phone", "PreferredLoginDevice_Phone", "PreferredPaymentMode_CC", "PreferredPaymentMode_COD", "PreferredPaymentMode_Cash_on_Delivery", "PreferredPaymentMode_Credit_Card", "PreferredPaymentMode_Debit_Card", "PreferredPaymentMode_E_wallet", "PreferredPaymentMode_UPI", "SatisfactionScore"]))
-
-# COMMAND ----------
-
-from sklearn.compose import ColumnTransformer
-
-preprocessor = ColumnTransformer(transformers, remainder="passthrough", sparse_threshold=0)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Train - Validation - Test Split
 # MAGIC Split the input data into 3 sets:
 # MAGIC - Train (60% of the dataset used to train the model)
 # MAGIC - Validation (20% of the dataset used to tune the hyperparameters of the model)
@@ -138,7 +71,7 @@ preprocessor = ColumnTransformer(transformers, remainder="passthrough", sparse_t
 
 # COMMAND ----------
 
-from sklearn.model_selection import train_test_split
+target_col = "Churn"
 
 split_X = df_loaded.drop([target_col], axis=1)
 split_y = df_loaded[target_col]
@@ -151,18 +84,103 @@ X_val, X_test, y_val, y_test = train_test_split(split_X_rem, split_y_rem, test_s
 
 # COMMAND ----------
 
+# Check distribution
+dist_arr = []
+arr_y = [('train', y_train), ('val', y_val), ('test', y_test)]
+
+for dataset_name, dist in arr_y:
+    
+    c = collections.Counter(dist)
+    total = c[0] + c[1]
+    dist_arr.append({'dataset':dataset_name, '0': c[0] / total, '1': c[1] / total})
+
+pd.DataFrame(dist_arr)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC 
+# MAGIC # 3. Preprocessors
+# MAGIC 
+# MAGIC Defining preprocessors of pipeline
+
+# COMMAND ----------
+
+# Select supported columns
+supported_cols = ['Tenure', 'WarehouseToHome', 'HourSpendOnApp',
+       'NumberOfDeviceRegistered', 'SatisfactionScore', 'NumberOfAddress',
+       'Complain', 'OrderAmountHikeFromlastYear', 'CouponUsed', 'OrderCount',
+       'DaySinceLastOrder', 'CashbackAmount', 'PreferredLoginDevice_Computer',
+       'PreferredLoginDevice_Mobile_Phone', 'PreferredLoginDevice_Phone',
+       'CityTier_1', 'CityTier_2', 'CityTier_3', 'PreferredPaymentMode_CC',
+       'PreferredPaymentMode_COD', 'PreferredPaymentMode_Cash_on_Delivery',
+       'PreferredPaymentMode_Credit_Card', 'PreferredPaymentMode_Debit_Card',
+       'PreferredPaymentMode_E_wallet', 'PreferredPaymentMode_UPI',
+       'Gender_Female', 'Gender_Male', 'PreferedOrderCat_Fashion',
+       'PreferedOrderCat_Grocery', 'PreferedOrderCat_Laptop_&_Accessory',
+       'PreferedOrderCat_Mobile', 'PreferedOrderCat_Mobile_Phone',
+       'PreferedOrderCat_Others', 'MaritalStatus_Divorced',
+       'MaritalStatus_Married', 'MaritalStatus_Single']
+col_selector = ColumnSelector(supported_cols)
+
+# Transformers
+transformers = []
+# Numerical Pipeline
+numerical_pipeline = Pipeline(steps=[
+        # Cast to numeric values
+        ("converter", FunctionTransformer(lambda df: df.apply(pd.to_numeric, errors="coerce"))),
+        # Mean and Standard deviation
+        ("standardizer", StandardScaler())])
+# Transformers
+transformers.append(("numerical", numerical_pipeline, 
+                     ["WarehouseToHome", "CashbackAmount", "DaySinceLastOrder", "Tenure", "OrderAmountHikeFromlastYear"]))
+# Preprocessor
+preprocessor = ColumnTransformer(transformers, remainder="passthrough", sparse_threshold=0)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Pipeline**
+
+# COMMAND ----------
+
+# Create a separate pipeline to transform the validation dataset. This is used for early stopping.
+pipeline = Pipeline([
+    ("column_selector", col_selector),
+    ("preprocessor", preprocessor)])
+
+mlflow.sklearn.autolog(disable=True)
+pipeline.fit(X_train, y_train)
+X_val_processed = pipeline.transform(X_val)
+pipeline
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Train classification model
-# MAGIC - Log relevant metrics to MLflow to track runs
-# MAGIC - All the runs are logged under [this MLflow experiment](#mlflow/experiments/713584551057122/s?orderByKey=metrics.%60val_f1_score%60&orderByAsc=false)
-# MAGIC - Change the model parameters and re-run the training cell to log a different trial to the MLflow experiment
-# MAGIC - To view the full list of tunable hyperparameters, check the output of the cell below
+# MAGIC 
+# MAGIC - Read about the model LGBMClassifier and the parameters used by AutoML
+# MAGIC - Which others algorithms can be used for a binary classification?
+# MAGIC - Plot metrics without log mlflot
+# MAGIC - The bias variance tradeoff analysis (course)
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
 from lightgbm import LGBMClassifier
 
-help(LGBMClassifier)
+#help(LGBMClassifier)
 
 # COMMAND ----------
 
