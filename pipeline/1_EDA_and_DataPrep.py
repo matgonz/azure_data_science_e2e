@@ -40,6 +40,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+from sklearn.preprocessing import OneHotEncoder
 %matplotlib inline
 
 # COMMAND ----------
@@ -142,14 +143,99 @@ for column in columns_to_detect_outliers:
 
 data = df.drop(columns=['CustomerID','Churn','CityTier'])
 plt.figure(figsize=(50,10))
-sns.boxplot(data=data).set_title('Outlier Analysis - Data without outliers')
+sns.boxplot(data=data).set_title('Outlier Analysis - After fix outlier values')
 
 # COMMAND ----------
 
-# Casting to object: CityTier and Churn
-#df['Churn'] = df['Churn'].astype('object')
-#df['CityTier'] = df['CityTier'].astype('object')
+# MAGIC %md
+# MAGIC **Data Processing: Casting types**
+# MAGIC 
+# MAGIC Casting to object: CityTier and Churn
 
 # COMMAND ----------
 
+df['Churn'] = df['Churn'].astype('object')
+df['CityTier'] = df['CityTier'].astype('object')
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Data Processing: OneHotEncoding**
+
+# COMMAND ----------
+
+# Select cols to apply OneHotEncoder
+cols_to_encoder = [col for col in df.drop(columns=['Churn']).columns if df[col].dtype == 'object']
+# Create and fit encoder
+one_hot_encoder = OneHotEncoder()
+one_hot_encoder.fit(df[cols_to_encoder])
+# Transform features
+features = one_hot_encoder.transform(df[cols_to_encoder]).toarray()
+features_col_name = one_hot_encoder.get_feature_names(cols_to_encoder)
+# Dataframe with encode features
+df_features_encoder = pd.DataFrame(data=features, columns=features_col_name)
+df_features_encoder['CustomerID'] = df['CustomerID']
+# Final dataframe
+df_features = df.copy()
+df_features.drop(columns=cols_to_encoder, inplace=True, axis=1)
+df_features = df_features.merge(df_features_encoder, on=['CustomerID'], how='inner')
+
+df_features.shape
+
+# COMMAND ----------
+
+df_features.columns
+
+# COMMAND ----------
+
+df_features.info()
+
+# COMMAND ----------
+
+# Rename column names to remove special chars
+cols = [col.replace(' ','_') for col in df_features.columns]
+df_features.columns = cols
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # 5. Feature Store
+# MAGIC 
+# MAGIC In order to do this, we'll want to provide the following:
+# MAGIC 1. The **name** of the database and table where we want to store the feature store
+# MAGIC 2. The **keys** for the table
+# MAGIC 3. The **schema** of the table
+# MAGIC 4. A **description** of the contents of the feature store
+# MAGIC 
+# MAGIC Create the feature table
+
+# COMMAND ----------
+
+# MAGIC %sql 
+# MAGIC CREATE DATABASE IF NOT EXISTS fs_ecommerce;
+
+# COMMAND ----------
+
+from databricks.feature_store import FeatureStoreClient
+
+fs = FeatureStoreClient()
+
+database_name = 'fs_ecommerce'
+df_spark_features = spark.createDataFrame(df_features)
+
+feature_table = fs.create_table(
+    name=f"{database_name}.customers_features",
+    primary_keys=["CustomerID"],
+    df=df_spark_features,
+    description="This table contains one-hot and numeric features to predict the churn of a customer"
+)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC 
+# MAGIC Write the records to the feature table
+
+# COMMAND ----------
+
+fs.write_table(df=df_spark_features, name=f"{database_name}.customers_features", mode='overwrite')
