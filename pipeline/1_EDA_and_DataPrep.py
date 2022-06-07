@@ -41,6 +41,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 from sklearn.preprocessing import OneHotEncoder
+from pyspark.sql.types import _parse_datatype_string
 %matplotlib inline
 
 # COMMAND ----------
@@ -193,8 +194,58 @@ df_features.info()
 # COMMAND ----------
 
 # Rename column names to remove special chars
-cols = [col.replace(' ','_') for col in df_features.columns]
+cols = [col.replace(' ','_').replace('&','and') for col in df_features.columns]
 df_features.columns = cols
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Testing schema before write on the feature tables**
+
+# COMMAND ----------
+
+feature_schema = """
+    CustomerID long,
+    Churn long,
+    Tenure double,
+    WarehouseToHome double,
+    HourSpendOnApp double,
+    NumberOfDeviceRegistered double,
+    SatisfactionScore double,
+    NumberOfAddress double,
+    Complain double,
+    OrderAmountHikeFromlastYear double,
+    CouponUsed double,
+    OrderCount double,
+    DaySinceLastOrder double,
+    CashbackAmount double,
+    PreferredLoginDevice_Computer double,
+    PreferredLoginDevice_Mobile_Phone double,
+    PreferredLoginDevice_Phone double,
+    CityTier_1 double,
+    CityTier_2 double,
+    CityTier_3 double,
+    PreferredPaymentMode_CC double,
+    PreferredPaymentMode_COD double,
+    PreferredPaymentMode_Cash_on_Delivery double,
+    PreferredPaymentMode_Credit_Card double,
+    PreferredPaymentMode_Debit_Card double,
+    PreferredPaymentMode_E_wallet double,
+    PreferredPaymentMode_UPI double,
+    Gender_Female double,
+    Gender_Male double,
+    PreferedOrderCat_Fashion double,
+    PreferedOrderCat_Grocery double,
+    PreferedOrderCat_Laptop_and_Accessory double,
+    PreferedOrderCat_Mobile double,
+    PreferedOrderCat_Mobile_Phone double,
+    PreferedOrderCat_Others double,
+    MaritalStatus_Divorced double,
+    MaritalStatus_Married double,
+    MaritalStatus_Single double
+"""
+
+assert spark.createDataFrame(df_features).schema == _parse_datatype_string(feature_schema)
 
 # COMMAND ----------
 
