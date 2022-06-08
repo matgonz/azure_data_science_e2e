@@ -28,12 +28,15 @@ import databricks.automl_runtime
 
 import sklearn
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
-from sklearn.compose import ColumnTransformer
-from sklearn import set_config
 
-set_config(display="diagram")
+from lightgbm import LGBMClassifier
+
+#from sklearn.pipeline import Pipeline
+#from sklearn.compose import ColumnTransformer
+#from sklearn import set_config
+
+#set_config(display="diagram")
 
 # COMMAND ----------
 
@@ -89,7 +92,6 @@ dist_arr = []
 arr_y = [('train', y_train), ('val', y_val), ('test', y_test)]
 
 for dataset_name, dist in arr_y:
-    
     c = collections.Counter(dist)
     total = c[0] + c[1]
     dist_arr.append({'dataset':dataset_name, '0': c[0] / total, '1': c[1] / total})
@@ -106,8 +108,7 @@ pd.DataFrame(dist_arr)
 
 # COMMAND ----------
 
-# Select supported columns
-supported_cols = ['Tenure', 'WarehouseToHome', 'HourSpendOnApp',
+feature_cols = ['Tenure', 'WarehouseToHome', 'HourSpendOnApp',
        'NumberOfDeviceRegistered', 'SatisfactionScore', 'NumberOfAddress',
        'Complain', 'OrderAmountHikeFromlastYear', 'CouponUsed', 'OrderCount',
        'DaySinceLastOrder', 'CashbackAmount', 'PreferredLoginDevice_Computer',
@@ -121,128 +122,73 @@ supported_cols = ['Tenure', 'WarehouseToHome', 'HourSpendOnApp',
        'PreferedOrderCat_Mobile', 'PreferedOrderCat_Mobile_Phone',
        'PreferedOrderCat_Others', 'MaritalStatus_Divorced',
        'MaritalStatus_Married', 'MaritalStatus_Single']
-col_selector = ColumnSelector(supported_cols)
 
-# Transformers
-transformers = []
-# Numerical Pipeline
-numerical_pipeline = Pipeline(steps=[
-        # Cast to numeric values
-        ("converter", FunctionTransformer(lambda df: df.apply(pd.to_numeric, errors="coerce"))),
-        # Mean and Standard deviation
-        ("standardizer", StandardScaler())])
-# Transformers
-transformers.append(("numerical", numerical_pipeline, 
-                     ["WarehouseToHome", "CashbackAmount", "DaySinceLastOrder", "Tenure", "OrderAmountHikeFromlastYear"]))
-# Preprocessor
-preprocessor = ColumnTransformer(transformers, remainder="passthrough", sparse_threshold=0)
+features_to_numeric = ["WarehouseToHome", "CashbackAmount", "DaySinceLastOrder", "Tenure", "OrderAmountHikeFromlastYear"]
+
+def transform_features(dataframe):
+    
+    # Select features
+    dataframe = dataframe[feature_cols]
+    
+    # Cast to numeric values
+    for col in features_to_numeric:
+        dataframe[col] = pd.to_numeric(dataframe[col])
+        
+    # Mean and Standard deviation
+    std_scaler = StandardScaler()
+    result_scaler = std_scaler.fit_transform(dataframe[feature_cols])
+
+    return result_scaler
+
+# COMMAND ----------
+
+X_train_scaled = transform_features(X_train)
+X_val_scaled = transform_features(X_val)
+X_test_scaled = transform_features(X_test)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC **Pipeline**
-
-# COMMAND ----------
-
-# Create a separate pipeline to transform the validation dataset. This is used for early stopping.
-pipeline = Pipeline([
-    ("column_selector", col_selector),
-    ("preprocessor", preprocessor)])
-
-mlflow.sklearn.autolog(disable=True)
-pipeline.fit(X_train, y_train)
-X_val_processed = pipeline.transform(X_val)
-pipeline
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Train classification model
+# MAGIC ## Experiments
 # MAGIC 
-# MAGIC - Read about the model LGBMClassifier and the parameters used by AutoML
-# MAGIC - Which others algorithms can be used for a binary classification?
-# MAGIC - Plot metrics without log mlflot
-# MAGIC - The bias variance tradeoff analysis (course)
+# MAGIC So, now we want to analyse the AutoML best model and optimize it through the bias variance tradeoff analysis and hyperparameters calibration.
 
 # COMMAND ----------
 
+##### Hyperparameters used by AutoML #####
+# colsample_bytree=0.5438762801993433,
+# lambda_l1=2.80383773385808,
+# lambda_l2=5.401710572056857,
+# learning_rate=0.03280149487316273,
+# max_bin=415,
+# max_depth=9,
+# min_child_samples=80,
+# n_estimators=1499,
+# num_leaves=205,
+# path_smooth=16.164096261021655,
+# subsample=0.7728650113993107,
+# random_state=591423154
 
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-
-
-# COMMAND ----------
-
-from lightgbm import LGBMClassifier
-
-#help(LGBMClassifier)
-
-# COMMAND ----------
-
-import mlflow
-import sklearn
-from sklearn import set_config
-from sklearn.pipeline import Pipeline
-
-set_config(display="diagram")
-
-lgbmc_classifier = LGBMClassifier(
-  colsample_bytree=0.5438762801993433,
-  lambda_l1=2.80383773385808,
-  lambda_l2=5.401710572056857,
-  learning_rate=0.03280149487316273,
-  max_bin=415,
-  max_depth=9,
-  min_child_samples=80,
-  n_estimators=1499,
-  num_leaves=205,
-  path_smooth=16.164096261021655,
-  subsample=0.7728650113993107,
-  random_state=591423154,
-)
-
-model = Pipeline([
-    ("column_selector", col_selector),
-    ("preprocessor", preprocessor),
-    ("classifier", lgbmc_classifier),
-])
-
-# Create a separate pipeline to transform the validation dataset. This is used for early stopping.
-pipeline = Pipeline([
-    ("column_selector", col_selector),
-    ("preprocessor", preprocessor),
-])
-
-mlflow.sklearn.autolog(disable=True)
-pipeline.fit(X_train, y_train)
-X_val_processed = pipeline.transform(X_val)
-
-model
+result = y_train.value_counts()
+pos_weight = result[0] / result[1]
 
 # COMMAND ----------
 
 # Enable automatic logging of input samples, metrics, parameters, and models
 mlflow.sklearn.autolog(log_input_examples=True, silent=True)
 
-with mlflow.start_run(experiment_id="713584551057122", run_name="lightgbm") as mlflow_run:
-    model.fit(X_train, y_train, classifier__early_stopping_rounds=5, classifier__eval_set=[(X_val_processed,y_val)], classifier__verbose=False)
+with mlflow.start_run(experiment_id="713584551057122", run_name="lightgbm_experiments") as mlflow_run:
+    
+    lgbmc_classifier = LGBMClassifier(objective='binary', is_unbalanc=True, sample_pos_weight=pos_weight)
+    lgbmc_classifier.fit(X_train_scaled, y_train, verbose=False)
     
     # Training metrics are logged by MLflow autologging
     # Log metrics for the validation set
-    lgbmc_val_metrics = mlflow.sklearn.eval_and_log_metrics(model, X_val, y_val, prefix="val_")
-
-    # Log metrics for the test set
-    lgbmc_test_metrics = mlflow.sklearn.eval_and_log_metrics(model, X_test, y_test, prefix="test_")
+    lgbmc_val_metrics = mlflow.sklearn.eval_and_log_metrics(lgbmc_classifier, X_val_scaled, y_val, prefix="val_")
 
     # Display the logged metrics
     lgbmc_val_metrics = {k.replace("val_", ""): v for k, v in lgbmc_val_metrics.items()}
-    lgbmc_test_metrics = {k.replace("test_", ""): v for k, v in lgbmc_test_metrics.items()}
-    display(pd.DataFrame([lgbmc_val_metrics, lgbmc_test_metrics], index=["validation", "test"]))
+    display(pd.DataFrame([lgbmc_val_metrics], index=["validation"]))
 
 # COMMAND ----------
 
@@ -266,7 +212,7 @@ with mlflow.start_run(experiment_id="713584551057122", run_name="lightgbm") as m
 # COMMAND ----------
 
 # Set this flag to True and re-run the notebook to see the SHAP plots
-shap_enabled = False
+shap_enabled = True
 
 # COMMAND ----------
 
@@ -279,10 +225,10 @@ if shap_enabled:
     example = X_val.sample(n=min(10, X_val.shape[0]))
 
     # Use Kernel SHAP to explain feature importance on the example from the validation set.
-    predict = lambda x: model.predict(pd.DataFrame(x, columns=X_train.columns))
+    predict = lambda x: lgbmc_classifier.predict(pd.DataFrame(x, columns=X_train.columns))
     explainer = KernelExplainer(predict, train_sample, link="identity")
     shap_values = explainer.shap_values(example, l1_reg=False)
-    summary_plot(shap_values, example, class_names=model.classes_)
+    summary_plot(shap_values, example, class_names=lgbmc_classifier.classes_)
 
 # COMMAND ----------
 
@@ -321,3 +267,15 @@ if shap_enabled:
 
 # model_uri for the generated model
 print(f"runs:/{ mlflow_run.info.run_id }/model")
+
+# COMMAND ----------
+
+model_name = "Churn"
+
+model_uri = f"runs:/{ mlflow_run.info.run_id }/model"
+
+model_name, model_uri
+
+# COMMAND ----------
+
+registered_model_version = mlflow.register_model(model_uri, model_name)
