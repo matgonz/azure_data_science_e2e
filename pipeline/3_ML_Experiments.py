@@ -30,8 +30,6 @@ import sklearn
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 
-from lightgbm import LGBMClassifier
-
 #from sklearn.pipeline import Pipeline
 #from sklearn.compose import ColumnTransformer
 #from sklearn import set_config
@@ -169,8 +167,191 @@ X_test_scaled = transform_features(X_test)
 # subsample=0.7728650113993107,
 # random_state=591423154
 
-result = y_train.value_counts()
-pos_weight = result[0] / result[1]
+# COMMAND ----------
+
+from sklearn.metrics import classification_report, accuracy_score, balanced_accuracy_score
+import numpy as np
+from lightgbm import LGBMClassifier
+
+# Function to help calculating classification metrics
+def classification_metrics(y_true, y_pred, _target_names):
+    print(classification_report(y_true, y_pred, _target_names))
+    print('Accuracy Score: ', accuracy_score(y_true, y_pred))
+    print('Balanced Accuracy Score: ', balanced_accuracy_score(y_true, y_pred))
+
+target_names = [0,1]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Baseline**
+
+# COMMAND ----------
+
+mlflow.sklearn.autolog(disable=True)
+
+np.random.seed(10)
+
+lgbmc_classifier = LGBMClassifier(objective='binary')
+lgbmc_classifier.fit(X_train_scaled, y_train)
+
+y_val_pred = lgbmc_classifier.predict(X_val_scaled)
+
+classification_metrics(y_true=y_val, y_pred=y_val_pred, _target_names=target_names)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **The Bias-Variance Tradeoff**
+# MAGIC 
+# MAGIC We are interested in the uncertainty associated with a particular classification model.
+# MAGIC 
+# MAGIC When measuring the uncertainty of a model, we are frequently interested in:
+# MAGIC - the **bias** of that model - how well it performs classification
+# MAGIC - the **variance** of that model - how much the model will differ if fit using different training data
+# MAGIC 
+# MAGIC 
+# MAGIC So, now we will examine many different models for predicting our target prepared using our feature data. Each of these models will be prepared using a different subset of the features. We will use the estimated and variance of each of these models to assess which model or models is likely to be the optimal model.
+# MAGIC 
+# MAGIC We will also consider the complexity of each model relative to the estimated bias and variance.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Estimating Bias and Variance with the Bootstrap Method**
+# MAGIC 
+# MAGIC The bootstrap is a method for estimating uncertainty, in this case uncertainty associated with bias and variance. The method involves generating a series of subsample sets by sampling with replacement from our dataset.
+# MAGIC 
+# MAGIC We will then fit a particular model under examination against each of the bootstrap subsample sets.
+# MAGIC 
+# MAGIC - The **accuracy mean (balanced accuracy mean)** across the models fit to each subsample set will be used to estimate **bias**.
+# MAGIC 
+# MAGIC - The **accuracy standard deviation** across the models fit to each subsample set will be used to estimate **variance**.
+
+# COMMAND ----------
+
+# Split out train and test data
+X_train, X_test, y_train, y_test = train_test_split(split_X, split_y, train_size=0.8, random_state=591423154, stratify=split_y)
+
+# Check distribution
+dist_arr = []
+arr_y = [('train', y_train), ('test', y_test)]
+ 
+for dataset_name, dist in arr_y:
+    c = collections.Counter(dist)
+    total = c[0] + c[1]
+    dist_arr.append({'dataset':dataset_name, '0': c[0] / total, '1': c[1] / total})
+ 
+pd.DataFrame(dist_arr)
+
+# COMMAND ----------
+
+churn_classes = df_loaded.Churn.unique()
+np.random.seed(10)
+
+def generate_bootstrap_sample():
+    df = df_loaded.copy()
+    sample_df_list = []
+    for churn in churn_classes:
+        sample_df_list.append(
+            df[df.Churn == churn].sample(frac=0.5)
+        )
+    return pd.concat(sample_df_list)
+
+# COMMAND ----------
+
+generate_bootstrap_sample()
+
+# COMMAND ----------
+
+# Generate subsample sets
+subsample_sets = [generate_bootstrap_sample() for _ in range(10)]
+# Display the number of samples in each subsample sets
+[subsample.shape for subsample in subsample_sets]
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+# Atribuindo peso inversamente proporcional
+class_weight = y_train.value_counts()
+class_weight = {1: class_weight[0] / y_train.count(),
+                0: class_weight[1] / y_train.count()}
+
+class_weight
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+mlflow.sklearn.autolog(disable=True)
+
+max_depths = np.arange(0,20)
+
+train_balanced_acc_score = []
+val_balanced_acc_score = []
+
+for value in max_depths:
+    
+    np.random.seed(10)
+    lgbmc_classifier = LGBMClassifier(objective='binary', max_depth=value)
+    lgbmc_classifier.fit(X_train_scaled, y_train)
+
+    y_train_pred = lgbmc_classifier.predict(X_train_scaled)
+    y_val_pred = lgbmc_classifier.predict(X_val_scaled)
+    
+    train_balanced_acc_score.append(balanced_accuracy_score(y_train, y_train_pred))
+    val_balanced_acc_score.append(balanced_accuracy_score(y_val, y_val_pred))
+
+# COMMAND ----------
+
+import matplotlib.pyplot as plt
+
+tradeoff = np.subtract(train_balanced_acc_score, val_balanced_acc_score)
+
+# plot the data
+fig = plt.figure()
+ax = fig.add_subplot(1, 1, 1)
+ax.plot(max_depths, train_balanced_acc_score)
+ax.plot(max_depths, val_balanced_acc_score)
+ax.plot(max_depths, tradeoff)
+
+# COMMAND ----------
+
+np.sort(tradeoff)[0]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC **Logistic Regression Experiment**
+
+# COMMAND ----------
+
+from sklearn.linear_model import LogisticRegression
+
+mlflow.sklearn.autolog(disable=True)
+
+np.random.seed(10)
+lr_classifier = LogisticRegression(class_weight=class_weight)
+lr_classifier.fit(X_train_scaled, y_train)
+
+y_val_pred = lr_classifier.predict(X_val_scaled)
+
+classification_metrics(y_true=y_val,
+                       y_pred=y_val_pred,
+                       _target_names=target_names)
+
+# COMMAND ----------
+
+
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
