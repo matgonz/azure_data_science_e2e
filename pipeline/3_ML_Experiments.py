@@ -384,43 +384,63 @@ for feature_subset in features_subsets:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Choose the best model [TODO]
+# MAGIC Choose the best model
 
 # COMMAND ----------
+
+# Custom: Select only results that have log features on mlflow
+def try_cast_to_int(value):
+    try:
+        result = int(value)
+        return 'int'
+    except:
+        return 'arr'
 
 # Access MLflow runs associated with this notebook
 results = mlflow.search_runs()
 #type(results)
 
+# Select metrics
 results = results[["params.len_features_subset", "metrics.mean score", "metrics.std score"]]
 results = results[~results["params.len_features_subset"].isnull()]
 results.drop_duplicates(inplace=True)
-results
+
+results["n_terms"] = results["params.len_features_subset"].apply(lambda x: x.count(",") + 1)
+results["metrics.delta mean score"] = 1 - results["metrics.mean score"]
+
+results['type_params_features_subset'] = results.apply(lambda x: try_cast_to_int(x['params.len_features_subset']), axis=1)
+results = results[results['type_params_features_subset'] != 'int']
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC Plot the Model Results Versus Bias and Variance [TODO]
-
-# COMMAND ----------
-
-#pyplot.figure(figsize=(20,10))
-
-#for _, (n_terms, bias, variance) in results.iterrows():
-#    pyplot.scatter(bias, variance, s=(int(n_terms)/36), label=n_terms)
-#pyplot.xlim(0.1, 0.6)
-#pyplot.ylim(0, 0.25)
-#pyplot.legend()
+results.sort_values(by=['metrics.delta mean score','metrics.std score','n_terms'], ascending=[True, True, True])
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC Training best model with all training data [TODO]
+# MAGIC 
+# MAGIC Best features: ['NumberOfDeviceRegistered', 'SatisfactionScore', 'NumberOfAddress', 'DaySinceLastOrder', 'Complain', 'CashbackAmount', 'Tenure']
+# MAGIC 
+# MAGIC - Predict data in test set
 
 # COMMAND ----------
 
 # retrain model with best features
-# asses model with validation set (classification_metrics())
+mlflow.sklearn.autolog(disable=True)
+np.random.seed(10)
+
+best_features = ['NumberOfDeviceRegistered', 'SatisfactionScore', 'NumberOfAddress', 'DaySinceLastOrder', 'Complain', 'CashbackAmount', 'Tenure']
+
+X_train_best_experiment_scaled = transform_features(dataframe=X_train_baseline, features=best_features)
+X_val_best_experiment_scaled = transform_features(dataframe=X_val_baseline, features=best_features)
+
+lgbmc_classifier = LGBMClassifier(objective='binary')
+lgbmc_classifier.fit(X_train_best_experiment_scaled, y_train_baseline)
+
+y_val__baseline_pred = lgbmc_classifier.predict(X_val_best_experiment_scaled)
+
+classification_metrics(y_true=y_val_baseline, y_pred=y_val__baseline_pred, _target_names=[0,1])
 # if the result is more than baseline result, then asses model in test set (classification_metrics())
 
 # COMMAND ----------
