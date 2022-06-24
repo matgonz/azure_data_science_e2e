@@ -270,220 +270,44 @@ pd.DataFrame(dist_arr)
 
 # COMMAND ----------
 
-mlflow.sklearn.autolog(disable=True)
-np.random.seed(10)
+with mlflow.start_run() as run:
 
-X_train_baseline_scaled = transform_features(dataframe=X_train_baseline, features=feature_cols)
-X_val_baseline_scaled = transform_features(dataframe=X_val_baseline, features=feature_cols)
+    np.random.seed(10)
 
-lgbmc_classifier = LGBMClassifier(objective='binary')
-lgbmc_classifier.fit(X_train_baseline_scaled, y_train_baseline)
+    X_train_baseline_scaled = transform_features(dataframe=X_train_baseline, features=feature_cols)
+    X_val_baseline_scaled = transform_features(dataframe=X_val_baseline, features=feature_cols)
 
-y_val__baseline_pred = lgbmc_classifier.predict(X_val_baseline_scaled)
+    objective = 'binary'
+    lgbmc_classifier = LGBMClassifier(objective=objective)
+    lgbmc_classifier.fit(X_train_baseline_scaled, y_train_baseline)
 
-classification_metrics(y_true=y_val_baseline, y_pred=y_val__baseline_pred, _target_names=[0,1])
+    y_val_baseline_pred = lgbmc_classifier.predict(X_val_baseline_scaled)
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 4. Experiments
-# MAGIC 
-# MAGIC So, now we want to analyse the AutoML best model and optimize it through the bias variance tradeoff analysis and hyperparameters calibration.
-# MAGIC 
-# MAGIC **The Bias-Variance Tradeoff** <br/>
-# MAGIC We are interested in the uncertainty associated with a particular classification model. When measuring the uncertainty of a model, we are frequently interested in:
-# MAGIC > - The **bias** of that model - how well it performs classification
-# MAGIC > - The **variance** of that model - how much the model will differ if fit using different training data
-# MAGIC 
-# MAGIC 
-# MAGIC So, now we will examine many different models for predicting our target prepared using our feature data. Each of these models will be prepared using a different subset of the features. We will use the estimated and variance of each of these models to assess which model or models is likely to be the optimal model. We will also consider the complexity of each model relative to the estimated bias and variance.
-# MAGIC 
-# MAGIC **Estimating Bias and Variance with the Bootstrap Method** <br/>
-# MAGIC The bootstrap is a method for estimating uncertainty, in this case uncertainty associated with bias and variance. The method involves generating a series of subsample sets by sampling with replacement from our dataset.
-# MAGIC 
-# MAGIC We will then fit a particular model under examination against each of the bootstrap subsample sets.
-# MAGIC 
-# MAGIC - The **balanced accuracy mean** across the models fit to each subsample set will be used to estimate **bias**.
-# MAGIC - The **balanced accuracy standard deviation** across the models fit to each subsample set will be used to estimate **variance**.
-# MAGIC 
-# MAGIC So, our experiment consist in:
-# MAGIC 1. Feature selection
-# MAGIC 2. Generate Feature Subsets
-# MAGIC 3. Run LightGBMClassifier with Cross-Validation (Use MLflow to log metrics, in this case we use Balanced Accuracy (mean and std)
-# MAGIC 4. Choose the best model
-# MAGIC 5. Training best model with all training data
+    classification_metrics(y_true=y_val_baseline, y_pred=y_val_baseline_pred, _target_names=[0,1])
+    
+    # Log params
+    mlflow.log_param("objective", objective)
+    
+    # Log model
+    mlflow.sklearn.log_model(lgbmc_classifier, "LGBMClassifier")
+    
+    # Log metrics
+    mlflow.log_metric('Accuracy Score Validation Set', accuracy_score(y_val_baseline, y_val_baseline_pred))
+    mlflow.log_metric('Balanced Accuracy Score Validation Set', balanced_accuracy_score(y_val_baseline, y_val_baseline_pred))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC Feature selection
+# MAGIC Access MLflow runs associated with this notebook
 
 # COMMAND ----------
 
-# Create a dataframe with training set (X, y)
-df_train_experiments = X_train.copy()
-df_train_experiments['Churn'] = y_train
-
-df_train_experiments.shape
-
-# COMMAND ----------
-
-fi = feature_selection(X=df_train_experiments[feature_cols], 
-                       y=df_train_experiments['Churn'], 
-                       features=feature_cols)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC We decide to chosen features with importance more than or equals the last quartile values
-
-# COMMAND ----------
-
-fi.loc[fi['importance'] >= 0.026796]
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Generate Feature Subsets
-
-# COMMAND ----------
-
-from itertools import combinations
-
-more_important_features = fi.loc[fi['importance'] >= 0.026796]['features'].tolist()
-
-features_subsets = []
-for i in range(1, len(more_important_features)+1):
-    features_subsets += [list(feat) for feat in combinations(more_important_features, i)]
-
-# COMMAND ----------
-
-f'We will training {len(features_subsets)*5} models'
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Generate subsample sets
-
-# COMMAND ----------
-
-#subsample_sets = [generate_bootstrap_sample(dataframe=df_train_experiments, target_column='Churn', frac_items_to_return=0.7) for _ in range(10)]
-subsample_sets = [generate_bootstrap_sample(dataframe=df_train_experiments, target_column='Churn', frac_items_to_return=0.5) for _ in range(5)]
-[aux.shape for aux in subsample_sets]
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Run LightGBMClassifier with Cross-Validation
-
-# COMMAND ----------
-
-for feature_subset in features_subsets:
-    experiment_runner(_subsample_sets=subsample_sets, feature_subset=feature_subset, target_colname='Churn')
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Choose the best model
-
-# COMMAND ----------
-
-# Custom: Select only results that have log features on mlflow
-def try_cast_to_int(value):
-    try:
-        result = int(value)
-        return 'int'
-    except:
-        return 'arr'
-
-# Access MLflow runs associated with this notebook
 results = mlflow.search_runs()
-#type(results)
 
 # Select metrics
-results = results[["params.len_features_subset", "metrics.mean score", "metrics.std score"]]
-results = results[~results["params.len_features_subset"].isnull()]
-results.drop_duplicates(inplace=True)
-
-results["n_terms"] = results["params.len_features_subset"].apply(lambda x: x.count(",") + 1)
-results["metrics.delta mean score"] = 1 - results["metrics.mean score"]
-
-results['type_params_features_subset'] = results.apply(lambda x: try_cast_to_int(x['params.len_features_subset']), axis=1)
-results = results[results['type_params_features_subset'] != 'int']
-
-# COMMAND ----------
-
-results.sort_values(by=['metrics.delta mean score','metrics.std score','n_terms'], ascending=[True, True, True])
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Training best model with all training data [TODO]
-# MAGIC 
-# MAGIC Best features: ['NumberOfDeviceRegistered', 'SatisfactionScore', 'NumberOfAddress', 'DaySinceLastOrder', 'Complain', 'CashbackAmount', 'Tenure']
-# MAGIC 
-# MAGIC - Predict data in test set
-
-# COMMAND ----------
-
-# retrain model with best features
-mlflow.sklearn.autolog(disable=True)
-np.random.seed(10)
-
-best_features = ['NumberOfDeviceRegistered', 'SatisfactionScore', 'NumberOfAddress', 'DaySinceLastOrder', 'Complain', 'CashbackAmount', 'Tenure']
-
-X_train_best_experiment_scaled = transform_features(dataframe=X_train_baseline, features=best_features)
-X_val_best_experiment_scaled = transform_features(dataframe=X_val_baseline, features=best_features)
-
-lgbmc_classifier = LGBMClassifier(objective='binary')
-lgbmc_classifier.fit(X_train_best_experiment_scaled, y_train_baseline)
-
-y_val__baseline_pred = lgbmc_classifier.predict(X_val_best_experiment_scaled)
-
-classification_metrics(y_true=y_val_baseline, y_pred=y_val__baseline_pred, _target_names=[0,1])
-# if the result is more than baseline result, then asses model in test set (classification_metrics())
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Feature importance [TODO]
-# MAGIC 
-# MAGIC SHAP is a game-theoretic approach to explain machine learning models, providing a summary plot
-# MAGIC of the relationship between features and model output. Features are ranked in descending order of
-# MAGIC importance, and impact/color describe the correlation between the feature and the target variable.
-# MAGIC 
-# MAGIC For more information on how to read Shapley values, see the [SHAP documentation](https://shap.readthedocs.io/en/latest/example_notebooks/overviews/An%20introduction%20to%20explainable%20AI%20with%20Shapley%20values.html).
-
-# COMMAND ----------
-
-# Set this flag to True and re-run the notebook to see the SHAP plots
-shap_enabled = True
-
-# COMMAND ----------
-
-if shap_enabled:
-    from shap import KernelExplainer, summary_plot
-    # Sample background data for SHAP Explainer. Increase the sample size to reduce variance.
-    train_sample = X_train.sample(n=min(100, X_train.shape[0]))
-
-    # Sample some rows from the validation set to explain. Increase the sample size for more thorough results.
-    example = X_val.sample(n=min(10, X_val.shape[0]))
-
-    # Use Kernel SHAP to explain feature importance on the example from the validation set.
-    predict = lambda x: lgbmc_classifier.predict(pd.DataFrame(x, columns=X_train.columns))
-    explainer = KernelExplainer(predict, train_sample, link="identity")
-    shap_values = explainer.shap_values(example, l1_reg=False)
-    summary_plot(shap_values, example, class_names=lgbmc_classifier.classes_)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC **Conclusion [TODO]**
-# MAGIC 
-# MAGIC - What I do: How manyb experiments I do, which algoriths I used and why
-# MAGIC - Baseline results (validation dataset)
-# MAGIC - Experiments results (validation dataset)
-# MAGIC - Best model results (test dataset)
+results = results[~results['metrics.Accuracy Score Validation Set'].isnull()]
+results = results[~results['tags.mlflow.log-model.history'].isnull()]
+results
 
 # COMMAND ----------
 
