@@ -3,6 +3,7 @@ Churn Prediction
 
 An end to end Customer Churn Prediction solution using Databricks platform.
 
+![Front](img/arch_mlops.png)
 
 Project Organization
 ------------
@@ -26,10 +27,8 @@ Project Organization
 │   │   └── train_model.py
 │   │
 │   ├── monitoring  <- Scripts to monitoring models in production
-│   │   └── visualize.py
 │   │
-│   └── utils  <- Scripts with utils functions to help about loading data, feature store, mlflow use
-│   │   └── feature_store_utils.py
+│   ├── utils  <- Scripts with utils functions to help about loading data, feature store, mlflow use
 │   │
 │   └── tests
 │
