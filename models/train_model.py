@@ -13,6 +13,7 @@
 
 import pandas as pd
 import numpy as np
+import datetime
 
 from matplotlib import pyplot
 %matplotlib inline
@@ -37,10 +38,12 @@ from databricks.feature_store import FeatureStoreClient
 
 fs = FeatureStoreClient()
 
-#retrieve_date = datetime.date(2022, 6, 28)
-#customer_features_df = fs.read_table(name='fs_ecommerce.churn', as_of_delta_timestamp=str(retrieve_date))
+# Get today date
+retrieve_date = datetime.date.today()
+# Using today date for time travel
+customer_features_df = fs.read_table(name='fs_ecommerce.churn', as_of_delta_timestamp=str(retrieve_date))
 
-customer_features_df = fs.read_table(name='fs_ecommerce.churn')
+#customer_features_df = fs.read_table(name='fs_ecommerce.churn')
 
 # COMMAND ----------
 
@@ -169,7 +172,58 @@ with mlflow.start_run(run_name="xgboost_v4") as mlflow_run:
     xgbc_val_metrics = mlflow.sklearn.eval_and_log_metrics(model, X_val, y_val, prefix="val_")
     # Log metrics for the test set
     xgbc_test_metrics = mlflow.sklearn.eval_and_log_metrics(model, X_test, y_test, prefix="test_")
+    
+    # Display the logged metrics
+    xgbc_val_metrics = {k.replace("val_", ""): v for k, v in xgbc_val_metrics.items()}
+    xgbc_test_metrics = {k.replace("test_", ""): v for k, v in xgbc_test_metrics.items()}
+    display(pd.DataFrame([xgbc_val_metrics, xgbc_test_metrics], index=["validation", "test"]))
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 4.1 Train models using the Databricks Feature Store
+
+# COMMAND ----------
+
+from databricks.feature_store import FeatureLookup
+
+feature_table = 'fs_ecommerce.churn'
+key = 'CustomerID'
+feature_names = customer_features_df.drop(*['CustomerID', 'Churn']).columns
+
+feature_lookups = [FeatureLookup(table_name=f"{feature_table}", 
+                                 feature_names=feature_names, 
+                                 lookup_key=f"{key}")]
+
+with mlflow.start_run(run_name="xgboost_v5") as mlflow_run:
+
+    # Create a training set
+    training_set = fs.create_training_set(
+        customer_features_df.select(['CustomerID','Churn']),
+        feature_lookups = feature_lookups,
+        label = 'Churn',
+        exclude_columns = ['CustomerID'])
+
+    # Load data from training set
+    training_df = training_set.load_df().toPandas()    
+    
+    X_train = training_df.drop(['Churn'], axis=1)
+    y_train = training_df.Churn
+    
+    model.fit(X_train, y_train, classifier__eval_set=[(X_val_processed, y_val)], classifier__verbose=False)
+    
+    fs.log_model(model,
+                 'train_model',
+                  flavor=mlflow.sklearn,
+                  training_set=training_set,
+                  registered_model_name='churn_prediction')
+    
+    # Training metrics are logged by MLflow autologging
+    # Log metrics for the validation set
+    xgbc_val_metrics = mlflow.sklearn.eval_and_log_metrics(model, X_val, y_val, prefix="val_")
+    # Log metrics for the test set
+    xgbc_test_metrics = mlflow.sklearn.eval_and_log_metrics(model, X_test, y_test, prefix="test_")
+    
     # Display the logged metrics
     xgbc_val_metrics = {k.replace("val_", ""): v for k, v in xgbc_val_metrics.items()}
     xgbc_test_metrics = {k.replace("test_", ""): v for k, v in xgbc_test_metrics.items()}
@@ -242,6 +296,16 @@ loaded_model = mlflow.pyfunc.load_model(logged_model)
 # Predict on a Pandas DataFrame.
 predicted_score = loaded_model.predict(split_X)
 
+predicted_score[:50]
+
 # COMMAND ----------
 
-predicted_score[:50]
+# MAGIC %md
+# MAGIC Batch Inferene with FeatureStoreClient.score_batch()
+
+# COMMAND ----------
+
+prediction = fs.score_batch(model_uri="models:/churn_prediction/3",
+                            df=customer_features_df.select('CustomerID'))
+
+display(prediction)

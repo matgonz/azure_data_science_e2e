@@ -290,4 +290,4 @@ feature_table = fs.create_table(
 
 # COMMAND ----------
 
-fs.write_table(df=df_spark_features, name=f"{database_name}.churn", mode='append') #mode='overwrite'
+fs.write_table(df=df_spark_features, name=f"{database_name}.churn", mode='merge') #mode='overwrite'

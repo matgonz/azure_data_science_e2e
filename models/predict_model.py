@@ -11,13 +11,15 @@
 # COMMAND ----------
 
 from databricks.feature_store import FeatureStoreClient
+import datetime
 
 fs = FeatureStoreClient()
 
-#retrieve_date = datetime.date(2022, 6, 28)
-#customer_features_df = fs.read_table(name='fs_ecommerce.churn', as_of_delta_timestamp=str(retrieve_date))
+retrieve_date = datetime.date.today()
+customer_features_df = fs.read_table(name='fs_ecommerce.churn', as_of_delta_timestamp=str(retrieve_date))
 
-customer_features_df = fs.read_table(name='fs_ecommerce.churn')
+#customer_features_df = fs.read_table(name='fs_ecommerce.churn')
+
 customer_features_pd = customer_features_df.toPandas()
 
 # COMMAND ----------
