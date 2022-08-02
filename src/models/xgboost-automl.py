@@ -1,9 +1,9 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # XGBoost training
-# MAGIC This is an auto-generated notebook. To reproduce these results, attach this notebook to the **Pocclouds** cluster and rerun it.
-# MAGIC - Compare trials in the [MLflow experiment](#mlflow/experiments/4207461175781303/s?orderByKey=metrics.%60val_roc_auc_score%60&orderByAsc=false)
-# MAGIC - Navigate to the parent notebook [here](#notebook/4207461175781304) (If you launched the AutoML experiment using the Experiments UI, this link isn't very useful.)
+# MAGIC This is an auto-generated notebook. To reproduce these results, attach this notebook to the **PoC** cluster and rerun it.
+# MAGIC - Compare trials in the [MLflow experiment](#mlflow/experiments/757687298370199/s?orderByKey=metrics.%60val_roc_auc_score%60&orderByAsc=false)
+# MAGIC - Navigate to the parent notebook [here](#notebook/757687298370189) (If you launched the AutoML experiment using the Experiments UI, this link isn't very useful.)
 # MAGIC - Clone this notebook into your project folder by selecting **File > Clone** in the notebook toolbar.
 # MAGIC 
 # MAGIC Runtime Version: _10.4.x-cpu-ml-scala2.12_
@@ -14,6 +14,7 @@ import mlflow
 import databricks.automl_runtime
 
 target_col = "Churn"
+time_col = "CustomerID"
 
 # COMMAND ----------
 
@@ -35,7 +36,7 @@ os.makedirs(input_temp_dir)
 
 # Download the artifact and read it into a pandas DataFrame
 input_client = MlflowClient()
-input_data_path = input_client.download_artifacts("98691adf863b40b6a0d9d4103d06fa2d", "data", input_temp_dir)
+input_data_path = input_client.download_artifacts("b9e7383f55f047a0ba2f1c065bdda281", "data", input_temp_dir)
 
 df_loaded = pd.read_parquet(os.path.join(input_data_path, "training_data"))
 # Delete the temp data
@@ -54,7 +55,7 @@ df_loaded.head(5)
 # COMMAND ----------
 
 from databricks.automl_runtime.sklearn.column_selector import ColumnSelector
-supported_cols = ["PreferredPaymentMode_UPI", "PreferedOrderCat_Others", "PreferedOrderCat_Mobile_Phone", "PreferedOrderCat_Fashion", "Complain", "PreferredPaymentMode_CC", "MaritalStatus_Divorced", "PreferredPaymentMode_E_wallet", "MaritalStatus_Single", "PreferredPaymentMode_Debit_Card", "PreferredPaymentMode_Credit_Card", "PreferedOrderCat_Laptop_and_Accessory", "Gender_Male", "CashbackAmount", "DaySinceLastOrder", "PreferedOrderCat_Mobile", "Gender_Female", "PreferredLoginDevice_Phone", "HourSpendOnApp", "WarehouseToHome", "CityTier_3", "NumberOfAddress", "PreferredLoginDevice_Computer", "PreferredPaymentMode_COD", "MaritalStatus_Married", "SatisfactionScore", "Tenure", "OrderAmountHikeFromlastYear", "OrderCount", "PreferedOrderCat_Grocery", "CouponUsed", "CityTier_1", "PreferredLoginDevice_Mobile_Phone", "NumberOfDeviceRegistered", "PreferredPaymentMode_Cash_on_Delivery", "CityTier_2"]
+supported_cols = ["PreferredPaymentMode_UPI", "PreferedOrderCat_Others", "PreferedOrderCat_Mobile_Phone", "PreferedOrderCat_Fashion", "Complain", "PreferredPaymentMode_CC", "MaritalStatus_Divorced", "PreferredPaymentMode_E_wallet", "MaritalStatus_Single", "PreferredPaymentMode_Debit_Card", "PreferredPaymentMode_Credit_Card", "PreferedOrderCat_Laptop_and_Accessory", "Gender_Male", "DaySinceLastOrder", "CashbackAmount", "PreferedOrderCat_Mobile", "Gender_Female", "PreferredLoginDevice_Phone", "HourSpendOnApp", "WarehouseToHome", "CityTier_3", "NumberOfAddress", "PreferredLoginDevice_Computer", "PreferredPaymentMode_COD", "MaritalStatus_Married", "SatisfactionScore", "Tenure", "OrderAmountHikeFromlastYear", "OrderCount", "PreferedOrderCat_Grocery", "CouponUsed", "CityTier_1", "PreferredLoginDevice_Mobile_Phone", "NumberOfDeviceRegistered", "PreferredPaymentMode_Cash_on_Delivery", "CustomerID", "CityTier_2"]
 col_selector = ColumnSelector(supported_cols)
 
 # COMMAND ----------
@@ -81,14 +82,14 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 
 num_imputers = []
-num_imputers.append(("impute_mean", SimpleImputer(), ["CashbackAmount", "DaySinceLastOrder", "OrderAmountHikeFromlastYear", "Tenure", "WarehouseToHome"]))
+num_imputers.append(("impute_mean", SimpleImputer(), ["CashbackAmount", "CustomerID", "DaySinceLastOrder", "OrderAmountHikeFromlastYear", "Tenure", "WarehouseToHome"]))
 
 numerical_pipeline = Pipeline(steps=[
     ("converter", FunctionTransformer(lambda df: df.apply(pd.to_numeric, errors="coerce"))),
     ("imputers", ColumnTransformer(num_imputers, sparse_threshold=0))
 ])
 
-transformers.append(("numerical", numerical_pipeline, ["WarehouseToHome", "CashbackAmount", "DaySinceLastOrder", "Tenure", "OrderAmountHikeFromlastYear"]))
+transformers.append(("numerical", numerical_pipeline, ["WarehouseToHome", "DaySinceLastOrder", "CashbackAmount", "Tenure", "OrderAmountHikeFromlastYear", "CustomerID"]))
 
 # COMMAND ----------
 
@@ -149,21 +150,25 @@ standardizer = StandardScaler()
 
 from sklearn.model_selection import train_test_split
 
+# Given that CustomerID is provided as the `time_col`, the data will be split based on time order.
+# The most recent data will be used as validation set, and thus shuffling when splitting the data is inappropriate.
+df_loaded = df_loaded.sort_values(time_col).reset_index(drop=True)
+
 split_X = df_loaded.drop([target_col], axis=1)
 split_y = df_loaded[target_col]
 
 # Split out train data
-X_train, split_X_rem, y_train, split_y_rem = train_test_split(split_X, split_y, train_size=0.6, random_state=9871075, stratify=split_y)
+X_train, split_X_rem, y_train, split_y_rem = train_test_split(split_X, split_y, train_size=0.6, shuffle=False)
 
 # Split remaining data equally for validation and test
-X_val, X_test, y_val, y_test = train_test_split(split_X_rem, split_y_rem, test_size=0.5, random_state=9871075, stratify=split_y_rem)
+X_val, X_test, y_val, y_test = train_test_split(split_X_rem, split_y_rem, test_size=0.5, shuffle=False)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Train classification model
 # MAGIC - Log relevant metrics to MLflow to track runs
-# MAGIC - All the runs are logged under [this MLflow experiment](#mlflow/experiments/4207461175781303/s?orderByKey=metrics.%60val_roc_auc_score%60&orderByAsc=false)
+# MAGIC - All the runs are logged under [this MLflow experiment](#mlflow/experiments/757687298370199/s?orderByKey=metrics.%60val_roc_auc_score%60&orderByAsc=false)
 # MAGIC - Change the model parameters and re-run the training cell to log a different trial to the MLflow experiment
 # MAGIC - To view the full list of tunable hyperparameters, check the output of the cell below
 
@@ -183,15 +188,15 @@ from sklearn.pipeline import Pipeline
 set_config(display="diagram")
 
 xgbc_classifier = XGBClassifier(
-  colsample_bytree=0.44193345569952586,
-  learning_rate=0.06282864067255331,
+  colsample_bytree=0.6130041644044038,
+  learning_rate=0.020013742401125027,
   max_depth=5,
-  min_child_weight=18,
-  n_estimators=771,
+  min_child_weight=2,
+  n_estimators=769,
   n_jobs=100,
-  subsample=0.5933268876765794,
+  subsample=0.45273300644775333,
   verbosity=0,
-  random_state=9871075,
+  random_state=961644377,
 )
 
 model = Pipeline([
@@ -219,7 +224,7 @@ model
 # Enable automatic logging of input samples, metrics, parameters, and models
 mlflow.sklearn.autolog(log_input_examples=True, silent=True)
 
-with mlflow.start_run(experiment_id="4207461175781303", run_name="xgboost") as mlflow_run:
+with mlflow.start_run(experiment_id="757687298370199", run_name="xgboost") as mlflow_run:
     model.fit(X_train, y_train, classifier__early_stopping_rounds=5, classifier__eval_set=[(X_val_processed,y_val)], classifier__verbose=False)
     
     # Training metrics are logged by MLflow autologging

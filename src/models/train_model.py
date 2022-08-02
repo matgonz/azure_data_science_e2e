@@ -1,4 +1,8 @@
 # Databricks notebook source
+# MAGIC %run ../config_env
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC # Train Model
 # MAGIC 
@@ -20,7 +24,6 @@ from matplotlib import pyplot
 import seaborn as sns
 
 import collections
-
 from mlflow.tracking import MlflowClient
 
 from sklearn.model_selection import GridSearchCV, cross_validate
@@ -35,15 +38,14 @@ from sklearn.metrics import classification_report, accuracy_score, balanced_accu
 # COMMAND ----------
 
 from databricks.feature_store import FeatureStoreClient
-
 fs = FeatureStoreClient()
 
 # Get today date
 retrieve_date = datetime.date.today()
-# Using today date for time travel
-customer_features_df = fs.read_table(name='fs_ecommerce.churn', as_of_delta_timestamp=str(retrieve_date))
 
-#customer_features_df = fs.read_table(name='fs_ecommerce.churn')
+# Using today date for time travel
+#customer_features_df = fs.read_table(name=feature_store_db_name_and_table, as_of_delta_timestamp=str(retrieve_date))
+customer_features_df = fs.read_table(name=feature_store_db_name_and_table)
 
 # COMMAND ----------
 
@@ -52,7 +54,7 @@ display(customer_features_df)
 # COMMAND ----------
 
 corr = customer_features_df.toPandas().drop(columns=['CustomerID']).corr()
-corr.style.background_gradient(cmap='coolwarm')
+corr.style.background_gradient(cmap='Blues_r')
 
 # COMMAND ----------
 
@@ -106,15 +108,15 @@ split_ds
 # MAGIC Baseline model created by Databricks AutoML:
 # MAGIC ```
 # MAGIC xgbc_classifier = XGBClassifier(
-# MAGIC   colsample_bytree=0.44193345569952586,
-# MAGIC   learning_rate=0.06282864067255331,
+# MAGIC   colsample_bytree=0.6130041644044038,
+# MAGIC   learning_rate=0.020013742401125027,
 # MAGIC   max_depth=5,
-# MAGIC   min_child_weight=18,
-# MAGIC   n_estimators=771,
+# MAGIC   min_child_weight=2,
+# MAGIC   n_estimators=769,
 # MAGIC   n_jobs=100,
-# MAGIC   subsample=0.5933268876765794,
+# MAGIC   subsample=0.45273300644775333,
 # MAGIC   verbosity=0,
-# MAGIC   random_state=9871075,
+# MAGIC   random_state=961644377,
 # MAGIC )
 # MAGIC ```
 
@@ -134,15 +136,15 @@ standardizer = StandardScaler()
 
 # Model
 xgbc_classifier = XGBClassifier(
-  colsample_bytree=0.44193345569952586,
-  learning_rate=0.06282864067255331,
+  colsample_bytree=0.6130041644044038,
+  learning_rate=0.020013742401125027,
   max_depth=5,
-  min_child_weight=18,
-  n_estimators=771,
+  min_child_weight=2,
+  n_estimators=769,
   n_jobs=100,
-  subsample=0.5933268876765794,
+  subsample=0.45273300644775333,
   verbosity=0,
-  random_state=9871075,
+  random_state=961644377,
 )
 
 # Create a separate pipeline to transform the validation dataset. This is used for early stopping.
@@ -187,11 +189,10 @@ with mlflow.start_run(run_name="xgboost_v4") as mlflow_run:
 
 from databricks.feature_store import FeatureLookup
 
-feature_table = 'fs_ecommerce.churn'
 key = 'CustomerID'
 feature_names = customer_features_df.drop(*['CustomerID', 'Churn']).columns
 
-feature_lookups = [FeatureLookup(table_name=f"{feature_table}", 
+feature_lookups = [FeatureLookup(table_name=feature_store_db_name_and_table, 
                                  feature_names=feature_names, 
                                  lookup_key=f"{key}")]
 
@@ -239,8 +240,6 @@ with mlflow.start_run(run_name="xgboost_v5") as mlflow_run:
 # Set this flag to True and re-run the notebook to see the SHAP plots
 shap_enabled = True
 
-# COMMAND ----------
-
 if shap_enabled:
     from shap import KernelExplainer, summary_plot
     # Sample background data for SHAP Explainer. Increase the sample size to reduce variance.
@@ -270,42 +269,5 @@ if shap_enabled:
 # COMMAND ----------
 
 #run_id = mlflow.search_runs(filter_string='tags.mlflow.runName = "xgboost_v4"').iloc[0].run_id
-
 #model_name = "churn_prediction"
 #model_version = mlflow.register_model(f"runs:/{run_id}/xgboost_v4", model_name)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Inference
-# MAGIC 
-# MAGIC ### Load from Model Registry
-
-# COMMAND ----------
-
-# model_uri for the generated model
-print(f"runs:/{ mlflow_run.info.run_id }/model")
-
-# COMMAND ----------
-
-logged_model = 'runs:/9caf0c05424c42e99dee6519d2ec1b74/model'
-
-# Load model as a PyFuncModel.
-loaded_model = mlflow.pyfunc.load_model(logged_model)
-
-# Predict on a Pandas DataFrame.
-predicted_score = loaded_model.predict(split_X)
-
-predicted_score[:50]
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC Batch Inferene with FeatureStoreClient.score_batch()
-
-# COMMAND ----------
-
-prediction = fs.score_batch(model_uri="models:/churn_prediction/3",
-                            df=customer_features_df.select('CustomerID'))
-
-display(prediction)
