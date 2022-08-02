@@ -1,6 +1,5 @@
 Churn Prediction
 ==============================
-Test
 
 An end to end Customer Churn Prediction solution using Databricks platform.
 

@@ -1,11 +1,14 @@
 # Databricks notebook source
+# MAGIC %run ../config_env
+
+# COMMAND ----------
+
 # MAGIC %md
-# MAGIC # 1. About Dataset
+# MAGIC # 1. About dataset
 # MAGIC 
 # MAGIC The data set belongs to a leading online E-Commerce company. An online retail (E-commerce) company wants to know the customers who are going to churn, so accordingly they can approach customer to offer some promos.
 # MAGIC 
 # MAGIC - **CustomerID**: Unique customer ID
-# MAGIC - **Churn**: Churn Flag
 # MAGIC - **Tenure**: Tenure of customer in organization
 # MAGIC - **PreferredLoginDevice**: Preferred login device of customer
 # MAGIC - **CityTier**: City tier
@@ -24,6 +27,7 @@
 # MAGIC - **OrderCount**: Total number of orders has been places in last month
 # MAGIC - **DaySinceLastOrder**: Day Since last order by customer
 # MAGIC - **CashbackAmount**: Average cashback in last month
+# MAGIC - **Churn**: Churn Flag
 
 # COMMAND ----------
 
@@ -32,9 +36,7 @@
 
 # COMMAND ----------
 
-!pip3 install openpyxl
-
-# COMMAND ----------
+#!pip3 install openpyxl
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -47,13 +49,12 @@ from pyspark.sql.types import _parse_datatype_string
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # 3. Reading the Data
+# MAGIC # 3. Loading data
 
 # COMMAND ----------
 
-path = '/dbfs/mnt/landingzone/dev/E Commerce Dataset.xlsx'
+df_raw = pd.read_excel(path_raw_data, sheet_name='E Comm')
 
-df_raw = pd.read_excel(path, sheet_name='E Comm')
 # Copy of data
 df = df_raw.copy()
 df.shape, df.columns
@@ -72,7 +73,7 @@ df.shape, df.columns
 
 # COMMAND ----------
 
-display(df)
+display(df.head())
 
 # COMMAND ----------
 
@@ -103,7 +104,7 @@ display(df[null_cols].describe().transpose().reset_index())
 # MAGIC %md
 # MAGIC **Data Processing: Outliers**
 # MAGIC 
-# MAGIC In a preliminary analysis we decide to use the IQR method to detect outliers because it is very simple to understand and use. After calc IQR distance and detect outliers, we'll flag it on dataset and use this data on test dataset.
+# MAGIC In a preliminary analysis we decide to use the IQR method to detect outliers because it is very simple to understand and use. After calc IQR distance and detect outliers, we'll fill the values with the range IQR.
 # MAGIC 
 # MAGIC Method: 1,5 * IQR
 
@@ -190,7 +191,7 @@ df_features.columns
 
 # COMMAND ----------
 
-display(df_features)
+display(df_features.head())
 
 # COMMAND ----------
 
@@ -263,24 +264,34 @@ assert spark.createDataFrame(df_features).schema == _parse_datatype_string(featu
 
 # COMMAND ----------
 
-# MAGIC %sql 
-# MAGIC CREATE DATABASE IF NOT EXISTS fs_ecommerce;
+feature_store_db_name
+
+# COMMAND ----------
+
+sqlContext.sql(f"CREATE DATABASE IF NOT EXISTS {feature_store_db_name};")
+
+# COMMAND ----------
+
+df_spark_features = spark.createDataFrame(df_features)
+
+# COMMAND ----------
+
+feature_store_db_name_and_table
 
 # COMMAND ----------
 
 from databricks.feature_store import FeatureStoreClient
-
 fs = FeatureStoreClient()
 
-database_name = 'fs_ecommerce'
-df_spark_features = spark.createDataFrame(df_features)
-
-feature_table = fs.create_table(
-    name=f"{database_name}.churn",
-    primary_keys=["CustomerID"],
-    df=df_spark_features,
-    description="This table contains one-hot and numeric features to predict the churn of a customer"
-)
+try:
+    fs.get_table(feature_store_db_name_and_table)
+    print(f'### There is a feature table named {feature_store_db_name_and_table}')
+except:
+    feature_table = fs.create_table(
+        name=feature_store_db_name_and_table,
+        primary_keys=["CustomerID"],
+        df=df_spark_features,
+        description="This table contains one-hot and numeric features to predict the churn of a customer")
 
 # COMMAND ----------
 
@@ -290,4 +301,4 @@ feature_table = fs.create_table(
 
 # COMMAND ----------
 
-fs.write_table(df=df_spark_features, name=f"{database_name}.churn", mode='merge') #mode='overwrite'
+fs.write_table(df=df_spark_features, name=feature_store_db_name_and_table, mode='merge') #mode='merge/overwrite'
