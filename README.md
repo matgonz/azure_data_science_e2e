@@ -44,8 +44,6 @@ Project Organization
 │   └── config_env.py
 │ 
 |── Azure Databricks - Step-by-step documentation
-│   
-│── Churn_Predicttion_Workshop.pdf 
 |
 ├── README.md          <- The top-level README for developers using this project.
 |
