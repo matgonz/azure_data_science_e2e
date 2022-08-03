@@ -3,7 +3,7 @@ Churn Prediction
 
 An end to end Customer Churn Prediction solution using Databricks platform.
 
-![Front](img/arch_mlops.png)
+![Front](imgs/arch_mlops.png)
 
 Project Organization
 ------------
