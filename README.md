@@ -6,10 +6,10 @@ In this repository I will show you how to use Azure Databricks for the developme
 The main idea is to build an end-to-end project for developing, training, deploying and monitoring machine learning models.
 
 Steps: <br>
-1. Train a churn prediction model using Azure Databricks
-2. Deploy the machine learning model
-3. Build a MLOps Pipeline
-4. Monitor your machine learning model
+1. [DONE] Train a churn prediction model using Azure Databricks
+2. [DONE] Deploy the machine learning model
+3. [...] Build a MLOps Pipeline
+4. [...] Monitor your machine learning model
 
 ![Front](imgs/azure_databricks_e2e_architecture.png)
 
