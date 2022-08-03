@@ -12,6 +12,7 @@
 import mlflow
 from databricks.feature_store import FeatureStoreClient
 import datetime
+from pyspark.sql.functions import col, lit
 
 # COMMAND ----------
 
@@ -48,3 +49,16 @@ features_spark_df = customer_features_df.drop(*_drop)
 
 prediction = fs.score_batch(model_uri="models:/churn_prediction/production", df=features_spark_df)
 display(prediction)
+
+# COMMAND ----------
+
+today = datetime.date.today()
+
+result = prediction.select('CustomerID','prediction')\
+    .withColumnRenamed('prediction','ChurnPrediction')\
+    .withColumn('ChurnPrediction', col('ChurnPrediction').astype('integer'))\
+    .withColumn('dtUpdate', lit(today))
+
+# COMMAND ----------
+
+result.write.mode('append').format("delta").partitionBy('dtUpdate').saveAsTable("diamond.churn_prediction")
